@@ -615,3 +615,58 @@ def test_powershell_format_completion_escapes_help():
     # produced by ZshComplete.
     item = CompletionItem("--at")
     assert pc.format_completion(item) == "plain\n--at\n_"
+
+
+def test_attached_short_option_value():
+    cli = Command(
+        "cli",
+        params=[
+            Option(["-a"], is_flag=True),
+            Option(["-c"], type=Choice(["auto", "always"])),
+        ],
+    )
+    assert _get_words(cli, [], "-ca") == ["-cauto", "-calways"]
+    assert _get_words(cli, [], "-aca") == ["-acauto", "-acalways"]
+
+
+def test_attached_short_option_value_keeps_name_completion():
+    cli = Command(
+        "cli",
+        params=[
+            Option(["-c"], type=Choice(["auto"])),
+            Option(["-cauto"], is_flag=True),
+        ],
+    )
+    assert _get_words(cli, [], "-ca") == ["-cauto"]
+
+
+def test_attached_short_option_value_needs_a_value():
+    cli = Command(
+        "cli",
+        params=[
+            Option(["-a"], is_flag=True),
+            Option(["-c"], type=Choice(["auto"])),
+        ],
+    )
+    assert _get_words(cli, [], "-ac") == []
+    assert _get_words(cli, [], "-c=auto") == ["auto"]
+
+
+def test_attached_short_option_value_exposes_cluster_context():
+    seen = []
+
+    def record(ctx, param, incomplete):
+        seen.append((ctx.params.get("a"), ctx.params.get("v")))
+        return [CompletionItem("auto")]
+
+    cli = Command(
+        "cli",
+        params=[
+            Option(["-a"], is_flag=True),
+            Option(["-v"], count=True),
+            Option(["-c"], shell_complete=record),
+            Argument(["rest"], nargs=-1),
+        ],
+    )
+    assert _get_words(cli, [], "-avca") == ["-avcauto"]
+    assert seen[-1] == (True, 1)

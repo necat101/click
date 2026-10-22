@@ -362,6 +362,21 @@ class ShellComplete:
         :param incomplete: Value being completed. May be empty.
         """
         ctx = _resolve_context(self.cli, self.ctx_args, self.prog_name, args)
+        attached = _resolve_attached_short_option(ctx, args, incomplete)
+
+        if attached is not None:
+            prefix, param, incomplete, cluster = attached
+
+            if cluster:
+                ctx = _resolve_context(
+                    self.cli, self.ctx_args, self.prog_name, [*args, *cluster]
+                )
+
+            return [
+                CompletionItem(f"{prefix}{item.value}", type=item.type, help=item.help)
+                for item in param.shell_complete(ctx, incomplete)
+            ]
+
         obj, incomplete = _resolve_incomplete(ctx, args, incomplete)
         return obj.shell_complete(ctx, incomplete)
 
@@ -799,3 +814,61 @@ def _resolve_incomplete(
     # There were no unparsed arguments, the command may be a group that
     # will provide command name completions.
     return ctx.command, incomplete
+
+
+def _resolve_attached_short_option(
+    ctx: Context, args: list[str], incomplete: str
+) -> tuple[str, Option, str, list[str]] | None:
+    """Split a short option cluster that carries an attached value.
+
+    A cluster such as ``-abcVALUE`` is a run of single character options.
+    Options that do not take a value are skipped and collected; the first
+    one that does ends the cluster and the rest of the token is its
+    attached value. Return the token prefix, the option, the value and the
+    skipped options, or ``None`` when the token is not such a cluster, or
+    an option name should be completed instead.
+
+    :param ctx: Invocation context for the command being completed.
+    :param args: List of complete args before the incomplete value.
+    :param incomplete: Value being completed.
+    """
+    if (
+        "--" in args
+        or "=" in incomplete
+        or len(incomplete) < 3
+        or not incomplete.startswith("-")
+        or incomplete.startswith("--")
+    ):
+        return None
+
+    params = ctx.command.get_params(ctx)
+
+    # A declared option name always wins, so a token that is one, or is
+    # still a viable prefix of one, completes the name instead.
+    for param in params:
+        if any(opt.startswith(incomplete) for opt in param.opts):
+            return None
+
+    cluster: list[str] = []
+
+    for i, char in enumerate(incomplete[1:], 1):
+        opt = f"-{char}"
+        param = next(
+            (p for p in params if isinstance(p, Option) and opt in p.opts), None
+        )
+
+        if param is None:
+            return None
+
+        if param.is_flag or param.count:
+            cluster.append(opt)
+            continue
+
+        value = incomplete[i + 1 :]
+
+        if not value:
+            return None
+
+        return incomplete[: i + 1], param, value, cluster
+
+    return None
